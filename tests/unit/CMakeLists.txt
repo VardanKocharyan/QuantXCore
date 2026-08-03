@@ -6,7 +6,6 @@ add_executable(quantxcore_unit_tests
     alpha_strategy_test.cpp
     alpha_engine_test.cpp
     rsi_strategy_test.cpp
-    oracle_test.cpp
 )
 
 target_include_directories(quantxcore_unit_tests PRIVATE
@@ -21,7 +20,25 @@ target_link_libraries(quantxcore_unit_tests PRIVATE
     gtest_main
 )
 
+# Backtest Engine unit test target
+add_executable(backtest_engine_test backtest_engine_test.cpp)
+
+target_include_directories(backtest_engine_test PRIVATE
+    ${CMAKE_SOURCE_DIR}/include
+)
+
+target_link_libraries(backtest_engine_test PRIVATE
+    QuantXCore_execution
+    QuantXCore_data
+    QuantXCore_alpha
+    QuantXCore_risk
+    gtest
+    gtest_main
+)
+
 target_compile_features(quantxcore_unit_tests PRIVATE cxx_std_20)
+target_compile_features(backtest_engine_test PRIVATE cxx_std_20)
 
 include(GoogleTest)
 gtest_discover_tests(quantxcore_unit_tests)
+gtest_discover_tests(backtest_engine_test)

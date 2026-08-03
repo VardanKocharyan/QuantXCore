@@ -18,6 +18,9 @@ out/
 *.dylib
 *.a
 
+# Local environment
+.env
+
 # CMake generated
 CMakeCache.txt
 CMakeFiles/

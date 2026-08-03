@@ -6,6 +6,12 @@ project(
     LANGUAGES CXX
 )
 
+# --------------------------------------------------
+# Find System Dependencies
+# --------------------------------------------------
+find_package(CURL REQUIRED)
+find_package(OpenSSL REQUIRED)
+find_package(Threads REQUIRED)
 
 # --------------------------------------------------
 # C++ Configuration
@@ -17,7 +23,6 @@ set(CMAKE_CXX_EXTENSIONS OFF)
 
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 
-
 if(NOT CMAKE_BUILD_TYPE)
     set(
         CMAKE_BUILD_TYPE
@@ -27,20 +32,17 @@ if(NOT CMAKE_BUILD_TYPE)
     )
 endif()
 
-
 option(
     QUANTXCORE_BUILD_TESTS
     "Build tests"
     ON
 )
 
-
 option(
     QUANTXCORE_BUILD_BENCHMARKS
     "Build benchmarks"
     OFF
 )
-
 
 # --------------------------------------------------
 # Compiler flags (only project)
@@ -52,13 +54,11 @@ add_compile_options(
     -Werror=return-type
 )
 
-
 if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
     add_compile_options(
         -Wshadow
     )
 endif()
-
 
 # --------------------------------------------------
 # Include
@@ -67,7 +67,6 @@ endif()
 include_directories(
     ${CMAKE_SOURCE_DIR}/include
 )
-
 
 # --------------------------------------------------
 # Config header
@@ -78,13 +77,11 @@ configure_file(
     ${CMAKE_BINARY_DIR}/generated/project_config.hpp
 )
 
-
 # --------------------------------------------------
-# Dependencies
+# Dependencies via FetchContent
 # --------------------------------------------------
 
 include(FetchContent)
-
 
 # ============================
 # nlohmann_json
@@ -96,16 +93,14 @@ FetchContent_Declare(
     GIT_TAG v3.11.3
 )
 
-
 FetchContent_MakeAvailable(nlohmann_json)
-
 
 # ============================
 # hiredis
 # ============================
 
 set(ENABLE_SSL OFF CACHE BOOL "" FORCE)
-set(DISABLE_TESTS ON CACHE BOOL "" FORCE)  # <--- HIREDIS-ի ԲՈՒՆ ՖԼԱԳԸ
+set(DISABLE_TESTS ON CACHE BOOL "" FORCE)
 set(BUILD_TESTING OFF CACHE BOOL "" FORCE)
 
 FetchContent_Declare(
@@ -115,7 +110,6 @@ FetchContent_Declare(
 )
 
 FetchContent_MakeAvailable(hiredis)
-
 
 # ==================================================
 # hiredis compatibility headers
@@ -147,7 +141,6 @@ set(
     "hiredis include directory"
     FORCE
 )
-
 
 # ==================================================
 # redis-plus-plus
@@ -189,7 +182,6 @@ FetchContent_Declare(
 
 FetchContent_MakeAvailable(redis_plus_plus)
 
-
 # Third party compatibility
 if(TARGET redis++_static)
     target_compile_options(
@@ -200,13 +192,25 @@ if(TARGET redis++_static)
     )
 endif()
 
-
 # --------------------------------------------------
-# Project sources
+# Project sources (Սա ստեղծում է quantxcore target-ը)
 # --------------------------------------------------
 
 add_subdirectory(src)
 
+# --------------------------------------------------
+# Link Libraries to quantxcore (Target-ի ստեղծումից ՀԵՏՈ)
+# --------------------------------------------------
+
+if(TARGET quantxcore)
+    target_link_libraries(quantxcore PRIVATE
+        CURL::libcurl
+        OpenSSL::SSL
+        OpenSSL::Crypto
+        nlohmann_json::nlohmann_json
+        Threads::Threads
+    )
+endif()
 
 # --------------------------------------------------
 # Tests
@@ -223,15 +227,9 @@ if(QUANTXCORE_BUILD_TESTS)
     add_subdirectory(tests)
 endif()
 
-
-# --------------------------------------------------
-# Direct CTest Override for third-party directories
-# --------------------------------------------------
-# ՍԱ ԱՄԲՈՂՋՈՒԹՅԱՄԲ ԱՆՋԱՏՈՒՄ Է HIREDIS-Ի TEST-ԵՐԸ CTEST-ԻՑ
 if(QUANTXCORE_BUILD_TESTS)
     set_property(DIRECTORY ${hiredis_BINARY_DIR} PROPERTY EXCLUDE_FROM_ALL TRUE)
 endif()
-
 
 # --------------------------------------------------
 # Install
@@ -243,7 +241,6 @@ install(
     DESTINATION
         include/QuantXCore
 )
-
 
 # --------------------------------------------------
 # Summary

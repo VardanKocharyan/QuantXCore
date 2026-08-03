@@ -1,7 +1,8 @@
-# Data library with both parser and streamer
+# Data library with parser, CsvTickParser, and streamer
 add_library(QuantXCore_data STATIC
     data.cpp
     redis_streamer.cpp
+    CsvTickParser.cpp
 )
 
 target_include_directories(QuantXCore_data PUBLIC
