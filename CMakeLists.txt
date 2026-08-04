@@ -6,12 +6,20 @@ project(
     LANGUAGES CXX
 )
 
+
+# --------------------------------------------------
+# Global Position Independent Code (-fPIC for dynamic libraries)
+# --------------------------------------------------
+set(CMAKE_POSITION_INDEPENDENT_CODE ON)
+
+
 # --------------------------------------------------
 # Find System Dependencies
 # --------------------------------------------------
 find_package(CURL REQUIRED)
 find_package(OpenSSL REQUIRED)
 find_package(Threads REQUIRED)
+find_package(Boost 1.75 REQUIRED COMPONENTS system)
 
 # --------------------------------------------------
 # C++ Configuration
