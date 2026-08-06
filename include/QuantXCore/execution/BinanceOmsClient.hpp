@@ -48,8 +48,10 @@ public:
     // Query Order Status (GET /api/v3/order)
     OrderResponse query_order(const std::string& symbol, int64_t order_id);
 
+    // Get Account Balance (GET /api/v3/account) -> Returns USDT free balance
+    double get_account_balance(const std::string& asset = "USDT");
+
     // Utility: HMAC-SHA256 Signer
-    // include/QuantXCore/execution/BinanceOmsClient.hpp
     static std::string hmac_sha256(const std::string& secret, const std::string& payload);
 
 private:

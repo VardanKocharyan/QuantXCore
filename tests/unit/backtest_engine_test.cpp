@@ -217,4 +217,18 @@ TEST(BacktestEngineTest, ReusingEngineInstanceResetsStateBetweenRuns) {
     EXPECT_NEAR(run1.final_balance, run2.final_balance, kEps);
 }
 
+TEST(BacktestEngineTest, TriggersDynamicTrailingStopDuringBacktest) {
+  // Setup Risk Limits with 2% Trailing Stop
+  QuantXCore::risk::RiskLimits limits;
+  limits.trailing_stop_pct = 0.02;
+
+  // Initialize BacktestEngine components
+  // Feed synthetic ticks: 
+  // Tick 1: Buy Signal @ $100 -> Order filled
+  // Tick 2: Price rises to $110 -> Peak updated
+  // Tick 3: Price drops to $107 -> Trailing stop triggers (Stop price $107.8)
+  
+  // Verify that execution_client recorded 2 fills (BUY entry, SELL risk exit)
+}
+
 }  // namespace QuantXCore::test

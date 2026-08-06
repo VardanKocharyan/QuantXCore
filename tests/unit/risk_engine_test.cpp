@@ -192,5 +192,64 @@ TEST(RiskEngineTest, AccountStateAccessorsReflectMutations) {
   EXPECT_EQ(state.open_positions_count, 1u);
 }
 
+TEST(RiskEngineTest, RateLimiterRejectsExceedingOrders) {
+  QuantXCore::risk::RiskLimits limits;
+  limits.max_orders_per_second = 2; // Maximum 2 orders per sec
+  QuantXCore::risk::AccountState state{10000.0, 10000.0, 10000.0, 0};
+  QuantXCore::risk::RiskEngine engine(limits, state);
+
+  QuantXCore::alpha::Signal signal;
+  signal.symbol = "BTCUSDT";
+  signal.type = QuantXCore::alpha::SignalType::BUY;
+  signal.price = 50000.0;
+  signal.strength = 0.8;
+
+  // First 2 orders should be approved
+  auto [res1, order1] = engine.process_signal(signal);
+  EXPECT_EQ(res1, QuantXCore::risk::RiskCheckResult::APPROVED);
+
+  auto [res2, order2] = engine.process_signal(signal);
+  EXPECT_EQ(res2, QuantXCore::risk::RiskCheckResult::APPROVED);
+
+  // 3rd order in rapid succession should be rejected by rate limiter
+  auto [res3, order3] = engine.process_signal(signal);
+  EXPECT_EQ(res3, QuantXCore::risk::RiskCheckResult::REJECTED_RATE_LIMIT_EXCEEDED);
+}
+
+TEST(RiskEngineTest, TrailingStopTriggersOnLongPosition) {
+  QuantXCore::risk::RiskLimits limits;
+  limits.trailing_stop_pct = 0.02; // 2% trailing stop
+  QuantXCore::risk::AccountState state{10000.0, 10000.0, 10000.0, 0};
+  QuantXCore::risk::RiskEngine engine(limits, state);
+
+  // Register BUY position at $100
+  engine.register_position("BTCUSDT", QuantXCore::alpha::SignalType::BUY, 100.0);
+
+  // Price rises to $110 (Extreme price becomes $110, dynamic stop set to 110 * 0.98 = $107.8)
+  auto exit1 = engine.on_tick("BTCUSDT", 110.0, 1000);
+  EXPECT_FALSE(exit1.has_value());
+
+  // Price drops slightly to $108.5 (above stop price of $107.8)
+  auto exit2 = engine.on_tick("BTCUSDT", 108.5, 1001);
+  EXPECT_FALSE(exit2.has_value());
+
+  // Price drops below stop price to $107.0 -> Dynamic Trailing Stop Triggered!
+  auto exit3 = engine.on_tick("BTCUSDT", 107.0, 1002);
+  ASSERT_TRUE(exit3.has_value());
+  EXPECT_EQ(exit3->side, QuantXCore::alpha::SignalType::SELL);
+  EXPECT_EQ(exit3->symbol, "BTCUSDT");
+  EXPECT_DOUBLE_EQ(exit3->stop_loss_price, 107.8);
+}
+
+TEST(RiskEngineTest, FeeValidationRejectsHighFee) {
+  QuantXCore::risk::RiskLimits limits;
+  limits.max_fee_pct = 0.001; // 0.1% max fee limit
+  QuantXCore::risk::AccountState state{10000.0, 10000.0, 10000.0, 0};
+  QuantXCore::risk::RiskEngine engine(limits, state);
+
+  EXPECT_TRUE(engine.validate_fee(0.0008));  // 0.08% fee is acceptable
+  EXPECT_FALSE(engine.validate_fee(0.0015)); // 0.15% fee exceeds limit
+}
+
 }  // namespace
 }  // namespace QuantXCore::risk

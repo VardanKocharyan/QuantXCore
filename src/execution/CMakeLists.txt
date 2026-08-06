@@ -3,6 +3,7 @@ add_library(QuantXCore_execution
     PositionTracker.cpp
     PnLTracker.cpp
     BinanceOmsClient.cpp
+    LiveEngine.cpp
 )
 
 target_include_directories(QuantXCore_execution PUBLIC

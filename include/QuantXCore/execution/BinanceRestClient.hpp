@@ -11,12 +11,12 @@
 #include <iomanip>
 #include <iostream>
 #include <chrono>
+#include <cmath>
 
 namespace QuantXCore::execution {
 
 class BinanceRestClient : public IExecutionClient {
 public:
-    // Default URL points to Binance Spot Testnet
     BinanceRestClient(std::string api_key, 
                       std::string api_secret, 
                       std::string base_url = "https://testnet.binance.vision")
@@ -35,12 +35,15 @@ public:
         
         const std::string side_str = (order.side == alpha::SignalType::BUY) ? "BUY" : "SELL";
         
+        // Round quantity to 5 decimal places to respect Binance BTCUSDT stepSize (0.00001)
+        double rounded_qty = std::floor(order.quantity * 100000.0) / 100000.0;
+
         std::ostringstream query;
         query << "symbol=" << order.symbol
               << "&side=" << side_str
               << "&type=LIMIT"
               << "&timeInForce=GTC"
-              << "&quantity=" << std::fixed << std::setprecision(6) << order.quantity
+              << "&quantity=" << std::fixed << std::setprecision(5) << rounded_qty
               << "&price=" << std::fixed << std::setprecision(2) << order.price
               << "&newClientOrderId=" << order.client_order_id
               << "&timestamp=" << get_current_timestamp_ms();
@@ -91,7 +94,6 @@ public:
     }
 
     bool cancel_order(const std::string& client_order_id) override {
-        // Can be extended via DELETE /api/v3/order
         (void)client_order_id;
         return true;
     }
@@ -145,7 +147,7 @@ private:
 
         curl_easy_setopt(curl, CURLOPT_URL, full_url.c_str());
         curl_easy_setopt(curl, CURLOPT_POST, 1L);
-        curl_easy_setopt(curl, CURLOPT_POSTFIELDSIZE, 0L); // Empty body, params in URL
+        curl_easy_setopt(curl, CURLOPT_POSTFIELDSIZE, 0L);
         curl_easy_setopt(curl, CURLOPT_HTTPHEADER, headers);
         curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, write_callback);
         curl_easy_setopt(curl, CURLOPT_WRITEDATA, &response_data);

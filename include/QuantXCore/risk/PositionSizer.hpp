@@ -18,8 +18,6 @@ class PositionSizer {
   // Computes the notional risk (in account currency) that a single trade is
   // allowed to lose, given the total account balance and a risk percentage
   // per trade (e.g. 0.02 == risk 2% of the account per trade).
-  //
-  // Returns 0.0 if either input is non-positive.
   static constexpr double ComputeRiskBudget(double account_balance,
                                              double account_risk_pct) {
     if (account_balance <= 0.0 || account_risk_pct <= 0.0) {
@@ -29,19 +27,37 @@ class PositionSizer {
   }
 
   // Computes the per-unit risk implied by an entry price and a stop-loss
-  // price, i.e. the absolute distance between the two. Returns 0.0 if the
-  // prices are equal (which would otherwise imply infinite size).
+  // price, i.e. the absolute distance between the two.
   static constexpr double ComputePerUnitRisk(double entry_price,
                                               double stop_loss_price) {
     return std::fabs(entry_price - stop_loss_price);
   }
 
-  // Computes the order quantity (in units of the underlying instrument)
-  // such that, if the position is stopped out at `stop_loss_price`, the
-  // realized loss equals `account_balance * account_risk_pct`.
-  //
-  // Returns 0.0 for any degenerate input (non-positive balance/price, or
-  // entry_price == stop_loss_price) rather than dividing by zero.
+  // Calculates per-unit risk taking into account round-trip Binance trading fees
+  // (e.g. fee_pct = 0.001 for 0.1%).
+  static constexpr double ComputeFeeAdjustedPerUnitRisk(double entry_price,
+                                                        double stop_loss_price,
+                                                        double fee_pct = 0.001) {
+    if (entry_price <= 0.0 || stop_loss_price <= 0.0) {
+      return 0.0;
+    }
+    const double effective_entry = entry_price * (1.0 + fee_pct);
+    const double effective_exit  = stop_loss_price * (1.0 - fee_pct);
+    const double risk = effective_entry - effective_exit;
+    return (risk > 0.0) ? risk : 0.0;
+  }
+
+  // Computes the minimum exit price required to break even after paying
+  // round-trip trading fees.
+  static constexpr double ComputeBreakEvenPrice(double entry_price,
+                                                 double fee_pct = 0.001) {
+    if (entry_price <= 0.0 || fee_pct >= 1.0) {
+      return 0.0;
+    }
+    return entry_price * ((1.0 + fee_pct) / (1.0 - fee_pct));
+  }
+
+  // Computes raw order quantity based on risk budget and per-unit risk.
   static double ComputeQuantityByRisk(double account_balance,
                                        double account_risk_pct,
                                        double entry_price,
@@ -57,25 +73,20 @@ class PositionSizer {
     return risk_budget / per_unit_risk;
   }
 
-  // Caps a notional USD exposure (quantity * price) to a maximum allowed
-  // USD position size, returning the (possibly reduced) quantity.
+  // Caps a notional USD exposure (quantity * price) to a maximum allowed USD size.
   static double CapQuantityByNotional(double quantity, double price,
                                        double max_position_size_usd) {
-    if (quantity <= 0.0 || price <= 0.0) {
+    if (quantity <= 0.0 || price <= 0.0 || max_position_size_usd <= 0.0) {
       return 0.0;
     }
     const double notional = quantity * price;
-    if (max_position_size_usd <= 0.0) {
-      return 0.0;
-    }
     if (notional <= max_position_size_usd) {
       return quantity;
     }
     return max_position_size_usd / price;
   }
 
-  // Convenience helper combining risk-based sizing with a hard notional
-  // cap. This is the primary entry point used by RiskEngine.
+  // Standard entry point combining risk-based sizing with hard USD cap.
   static double ComputeSizedQuantity(double account_balance,
                                       double account_risk_pct,
                                       double entry_price,
@@ -85,6 +96,23 @@ class PositionSizer {
         account_balance, account_risk_pct, entry_price, stop_loss_price);
     return CapQuantityByNotional(raw_quantity, entry_price,
                                   max_position_size_usd);
+  }
+
+  // Fee-aware entry point combining fee-adjusted risk sizing with hard USD cap.
+  static double ComputeFeeAdjustedSizedQuantity(double account_balance,
+                                                 double account_risk_pct,
+                                                 double entry_price,
+                                                 double stop_loss_price,
+                                                 double max_position_size_usd,
+                                                 double fee_pct = 0.001) {
+    const double risk_budget = ComputeRiskBudget(account_balance, account_risk_pct);
+    const double per_unit_risk = ComputeFeeAdjustedPerUnitRisk(entry_price, stop_loss_price, fee_pct);
+
+    if (risk_budget <= 0.0 || per_unit_risk <= 0.0 || entry_price <= 0.0) {
+      return 0.0;
+    }
+    const double raw_quantity = risk_budget / per_unit_risk;
+    return CapQuantityByNotional(raw_quantity, entry_price, max_position_size_usd);
   }
 };
 

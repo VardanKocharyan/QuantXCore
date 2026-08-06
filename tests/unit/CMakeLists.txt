@@ -10,15 +10,21 @@ add_executable(quantxcore_unit_tests
     orderbook_test.cpp
     binance_rest_test.cpp
     binance_oms_test.cpp
+    performance_analytics_test.cpp
+    live_engine_test.cpp
+    database_manager_test.cpp
 )
 target_include_directories(quantxcore_unit_tests PRIVATE
     ${CMAKE_SOURCE_DIR}/include
 )
+
 target_link_libraries(quantxcore_unit_tests PRIVATE
     QuantXCore_core
     QuantXCore_data
     QuantXCore_alpha
     QuantXCore_execution
+    QuantXCore_analytics
+    SQLite::SQLite3
     gtest
     gtest_main
 )
@@ -36,6 +42,7 @@ target_link_libraries(backtest_engine_test PRIVATE
     QuantXCore_data
     QuantXCore_alpha
     QuantXCore_risk
+    QuantXCore_analytics
     gtest
     gtest_main
 )

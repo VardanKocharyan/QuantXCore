@@ -22,7 +22,19 @@ namespace net = boost::asio;
 namespace ssl = net::ssl;
 using tcp = net::ip::tcp;
 
-// src/execution/BinanceOmsClient.cpp
+namespace {
+std::string format_double(double val, int precision = 8) {
+    std::ostringstream oss;
+    oss << std::fixed << std::setprecision(precision) << val;
+    std::string str = oss.str();
+    str.erase(str.find_last_not_of('0') + 1, std::string::npos);
+    if (str.back() == '.') {
+        str.pop_back();
+    }
+    return str;
+}
+} // namespace
+
 std::string BinanceOmsClient::hmac_sha256(const std::string& secret, const std::string& payload) {
     unsigned char digest[EVP_MAX_MD_SIZE];
     unsigned int len = 0;
@@ -57,10 +69,10 @@ public:
         query << "symbol=" << req.symbol
               << "&side=" << (req.side == OrderSide::BUY ? "BUY" : "SELL")
               << "&type=" << (req.type == OrderType::LIMIT ? "LIMIT" : "MARKET")
-              << "&quantity=" << std::fixed << std::setprecision(8) << req.quantity;
+              << "&quantity=" << format_double(req.quantity, 6);
 
         if (req.type == OrderType::LIMIT) {
-            query << "&price=" << std::fixed << std::setprecision(8) << req.price;
+            query << "&price=" << format_double(req.price, 2);
             query << "&timeInForce=";
             switch (req.time_in_force) {
                 case TimeInForce::GTC: query << "GTC"; break;
@@ -104,6 +116,38 @@ public:
         std::string full_target = "/api/v3/order?" + query_str + "&signature=" + signature;
 
         return send_http_request(http::verb::get, full_target);
+    }
+
+    double get_account_balance(const std::string& asset) {
+        int64_t timestamp = std::chrono::duration_cast<std::chrono::milliseconds>(
+            std::chrono::system_clock::now().time_since_epoch()).count();
+
+        std::string query_str = "timestamp=" + std::to_string(timestamp);
+        std::string signature = BinanceOmsClient::hmac_sha256(api_secret_, query_str);
+        std::string full_target = "/api/v3/account?" + query_str + "&signature=" + signature;
+
+        OrderResponse res = send_http_request(http::verb::get, full_target);
+        if (!res.success) {
+            std::cerr << "[BinanceOmsClient] Failed to fetch account balance: " << res.raw_response << std::endl;
+            return 0.0;
+        }
+
+        try {
+            auto json = nlohmann::json::parse(res.raw_response);
+            if (json.contains("balances")) {
+                for (const auto& b : json["balances"]) {
+                    if (b.contains("asset") && b["asset"] == asset) {
+                        if (b.contains("free")) {
+                            return std::stod(b["free"].get<std::string>());
+                        }
+                    }
+                }
+            }
+        } catch (const std::exception& e) {
+            std::cerr << "[BinanceOmsClient] Error parsing account balance: " << e.what() << std::endl;
+        }
+
+        return 0.0;
     }
 
 private:
@@ -170,5 +214,6 @@ BinanceOmsClient::~BinanceOmsClient() = default;
 OrderResponse BinanceOmsClient::place_order(const OrderRequest& req) { return impl_->place_order(req); }
 OrderResponse BinanceOmsClient::cancel_order(const std::string& symbol, int64_t order_id) { return impl_->cancel_order(symbol, order_id); }
 OrderResponse BinanceOmsClient::query_order(const std::string& symbol, int64_t order_id) { return impl_->query_order(symbol, order_id); }
+double BinanceOmsClient::get_account_balance(const std::string& asset) { return impl_->get_account_balance(asset); }
 
 } // namespace quantxcore::execution

@@ -20,6 +20,8 @@ find_package(CURL REQUIRED)
 find_package(OpenSSL REQUIRED)
 find_package(Threads REQUIRED)
 find_package(Boost 1.75 REQUIRED COMPONENTS system)
+find_package(SQLite3 REQUIRED)
+
 
 # --------------------------------------------------
 # C++ Configuration
@@ -201,13 +203,17 @@ if(TARGET redis++_static)
 endif()
 
 # --------------------------------------------------
-# Project sources (Սա ստեղծում է quantxcore target-ը)
+# Project sources 
 # --------------------------------------------------
 
 add_subdirectory(src)
 
+if(TARGET QuantXCore_execution)
+    target_link_libraries(QuantXCore_execution PRIVATE SQLite::SQLite3)
+endif()
+
 # --------------------------------------------------
-# Link Libraries to quantxcore (Target-ի ստեղծումից ՀԵՏՈ)
+# Link Libraries to quantxcore
 # --------------------------------------------------
 
 if(TARGET quantxcore)

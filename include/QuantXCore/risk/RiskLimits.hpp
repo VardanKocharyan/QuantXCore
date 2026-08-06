@@ -17,6 +17,15 @@ struct RiskLimits {
   double max_position_size_usd{100000.0};
   double max_leverage{3.0};
   std::size_t max_open_positions{5};
+
+  // Trailing stop loss distance percentage (e.g. 0.02 == 2%).
+  double trailing_stop_pct{0.02};
+
+  // Maximum allowed taker/maker fee tier percentage (e.g. 0.001 == 0.1%).
+  double max_fee_pct{0.001};
+
+  // Rate limiter: maximum orders allowed per second (0 = disabled).
+  std::size_t max_orders_per_second{0};
 };
 
 // Result of a pre-trade risk check performed by the RiskEngine.
@@ -27,6 +36,8 @@ enum class RiskCheckResult {
   REJECTED_MAX_POSITION_SIZE,
   REJECTED_MAX_OPEN_POSITIONS,
   REJECTED_INVALID_SIGNAL,
+  REJECTED_RATE_LIMIT_EXCEEDED,
+  REJECTED_FEE_LIMIT_EXCEEDED,
 };
 
 // A fully-sized, risk-checked order ready to be routed to an execution

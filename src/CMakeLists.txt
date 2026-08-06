@@ -5,6 +5,7 @@ add_subdirectory(alpha)
 add_subdirectory(risk)
 add_subdirectory(execution)
 add_subdirectory(portfolio)
+add_subdirectory(analytics)
 
 # Main executable
 add_executable(quantxcore 
@@ -18,6 +19,7 @@ target_link_libraries(quantxcore PRIVATE
     QuantXCore_risk
     QuantXCore_execution
     QuantXCore::portfolio
+    SQLite::SQLite3  # <-- Ուղղված է (SQLite::SQLite3)
 )
 
 install(TARGETS quantxcore DESTINATION bin)
