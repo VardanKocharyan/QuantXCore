@@ -28,7 +28,7 @@ std::vector<Signal> AlphaEngine::on_tick(const QuantXCore::data::MarketTick& tic
     for (const auto& [strat_name, strategy] : strategies_) {
         if (strategy) {
             auto signal_opt = strategy->on_tick(tick);
-            if (signal_opt.has_value()) {
+            if (signal_opt.has_value() && signal_opt->strength >= 0.75f) {
                 active_signals.push_back(signal_opt.value());
             }
         }

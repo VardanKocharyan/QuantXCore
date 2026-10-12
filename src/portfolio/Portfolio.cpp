@@ -61,7 +61,8 @@ void Portfolio::on_tick(const data::MarketTick& tick) {
 
 double Portfolio::get_cash() const {
     std::lock_guard<std::mutex> lock(mutex_);
-    return current_cash_;
+    // Վերադարձնում է իրական ազատ կանխիկը (եթե բացասական է, վերադարձնում է 0)
+    return std::max(0.0, current_cash_);
 }
 
 double Portfolio::get_realized_pnl() const {
@@ -81,7 +82,16 @@ double Portfolio::get_total_equity() const {
 
 double Portfolio::get_buying_power() const {
     std::lock_guard<std::mutex> lock(mutex_);
-    return unlocked_total_equity() * leverage_;
+
+    // FIX: SPOT market-ում (leverage <= 1.0) Buying Power-ը ՍԱՀՄԱՆԱՓԱԿՎԱԾ Է
+    // ՄԻԱՅՆ ազատ կանխիկով (current_cash_):
+    // Գնված ակտիվի արժեքը չի կարող օգտագործվել նոր SPOT գնում անելու համար:
+    if (leverage_ <= 1.0) {
+        return std::max(0.0, current_cash_);
+    }
+
+    // Futures/Margin ռեժիմում հաշվի է առնվում Total Equity * Leverage
+    return std::max(0.0, unlocked_total_equity() * leverage_);
 }
 
 double Portfolio::get_total_commissions_paid() const {

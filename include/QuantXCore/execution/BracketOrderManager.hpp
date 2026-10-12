@@ -14,12 +14,12 @@ namespace QuantXCore::execution {
 struct PositionBracket {
     std::string symbol;
     double entry_price{0.0};
-    double quantity{0.0};          // Դրական LONG-ի համար, բացասական SHORT-ի համար
+    double quantity{0.0};
     double stop_loss_price{0.0};
     double take_profit_price{0.0};
     bool trailing_enabled{false};
-    double trailing_pct{0.0};      // Օրինակ՝ 0.015 (1.5%)
-    double peak_price{0.0};        // Max price LONG-ի համար, Min price SHORT-ի համար
+    double trailing_pct{0.0};
+    double peak_price{0.0};
 };
 
 enum class TriggerType { NONE, STOP_LOSS, TAKE_PROFIT, TRAILING_STOP };
@@ -33,11 +33,11 @@ struct TriggerResult {
 
 class BracketOrderManager {
 public:
-    void set_bracket(const std::string& symbol, 
-                     double entry_price, 
-                     double quantity, 
-                     double sl_pct, 
-                     double tp_pct, 
+    void set_bracket(const std::string& symbol,
+                     double entry_price,
+                     double quantity,
+                     double sl_pct,
+                     double tp_pct,
                      double trailing_pct = 0.0) {
         std::lock_guard<std::mutex> lock(mutex_);
 
@@ -64,10 +64,40 @@ public:
 
         brackets_[symbol] = bracket;
 
-        std::cout << "[BracketManager] SL/TP active for " << symbol 
-                  << " | Entry: $" << entry_price 
-                  << " | SL: $" << bracket.stop_loss_price 
-                  << " | TP: $" << bracket.take_profit_price 
+        std::cout << "[BracketManager] SL/TP active for " << symbol
+                  << " | Entry: $" << entry_price
+                  << " | SL: $" << bracket.stop_loss_price
+                  << " | TP: $" << bracket.take_profit_price
+                  << (bracket.trailing_enabled ? " | Trailing Active" : "") << std::endl;
+    }
+
+    void set_bracket_exact(const std::string& symbol,
+                           double entry_price,
+                           double quantity,
+                           double stop_loss_price,
+                           double take_profit_price,
+                           double trailing_pct = 0.0) {
+        std::lock_guard<std::mutex> lock(mutex_);
+
+        PositionBracket bracket;
+        bracket.symbol = symbol;
+        bracket.entry_price = entry_price;
+        bracket.quantity = quantity;
+        bracket.peak_price = entry_price;
+        bracket.stop_loss_price = stop_loss_price;
+        bracket.take_profit_price = take_profit_price;
+
+        if (trailing_pct > 0.0) {
+            bracket.trailing_enabled = true;
+            bracket.trailing_pct = trailing_pct;
+        }
+
+        brackets_[symbol] = bracket;
+
+        std::cout << "[BracketManager] SL/TP active for " << symbol
+                  << " | Entry: $" << entry_price
+                  << " | SL: $" << bracket.stop_loss_price
+                  << " | TP: $" << bracket.take_profit_price
                   << (bracket.trailing_enabled ? " | Trailing Active" : "") << std::endl;
     }
 
@@ -83,14 +113,13 @@ public:
         bool is_long = (bracket.quantity > 0);
         double current_price = tick.price;
 
-        // 1. Dynamic Trailing Stop-ի թարմացում
         if (bracket.trailing_enabled) {
             if (is_long && current_price > bracket.peak_price) {
                 bracket.peak_price = current_price;
                 double new_sl = current_price * (1.0 - bracket.trailing_pct);
                 if (new_sl > bracket.stop_loss_price) {
                     bracket.stop_loss_price = new_sl;
-                    std::cout << "[BracketManager] Trailing SL updated for " << tick.symbol 
+                    std::cout << "[BracketManager] Trailing SL updated for " << tick.symbol
                               << " -> $" << new_sl << std::endl;
                 }
             } else if (!is_long && current_price < bracket.peak_price) {
@@ -98,13 +127,12 @@ public:
                 double new_sl = current_price * (1.0 + bracket.trailing_pct);
                 if (new_sl < bracket.stop_loss_price) {
                     bracket.stop_loss_price = new_sl;
-                    std::cout << "[BracketManager] Trailing SL updated for " << tick.symbol 
+                    std::cout << "[BracketManager] Trailing SL updated for " << tick.symbol
                               << " -> $" << new_sl << std::endl;
                 }
             }
         }
 
-        // 2. Stop-Loss Trigger Check
         if ((is_long && current_price <= bracket.stop_loss_price) ||
             (!is_long && current_price >= bracket.stop_loss_price)) {
             TriggerResult res{
@@ -117,7 +145,6 @@ public:
             return res;
         }
 
-        // 3. Take-Profit Trigger Check
         if ((is_long && current_price >= bracket.take_profit_price) ||
             (!is_long && current_price <= bracket.take_profit_price)) {
             TriggerResult res{

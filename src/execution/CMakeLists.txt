@@ -11,7 +11,6 @@ target_include_directories(QuantXCore_execution PUBLIC
 )
 
 target_link_libraries(QuantXCore_execution PUBLIC
-    QuantXCore_core
     QuantXCore_data
     QuantXCore_alpha
     QuantXCore_risk

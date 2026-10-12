@@ -18,6 +18,9 @@ struct Signal {
     SignalType type{SignalType::HOLD};
     double price{0.0};
     double strength{0.0};       ///< Confidence in [0.0, 1.0]
+    double atr{0.0};            ///< ATR value for dynamic SL/TP
+    double stop_loss{0.0};
+    double take_profit{0.0};
     std::uint64_t timestamp{0};  ///< Epoch time (ns or exchange-native units)
     std::string strategy_name;
 };

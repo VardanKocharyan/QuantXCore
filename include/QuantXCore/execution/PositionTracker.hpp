@@ -20,10 +20,11 @@ struct Position {
     double unrealized_pnl{0.0};        // (current_price - avg_entry_price) * quantity
     double realized_pnl{0.0};          // Cumulative realized PnL for this symbol
 
-    // Trailing Stop Loss State
+    // Trailing & Break-Even Stop Loss State
     double peak_price{0.0};            // Highest price reached since position open
-    double trailing_stop_price{0.0};   // Monotonically non-decreasing stop loss price
-    bool trailing_active{false};       // True when trailing mechanism is active
+    double trailing_stop_price{0.0};   // Dynamic Stop Loss price
+    bool break_even_active{false};     // True when position is locked at Break-Even
+    bool trailing_active{false};       // True when dynamic trailing is active
 };
 
 class PositionTracker {
@@ -33,11 +34,12 @@ public:
     // Apply a fill event to the tracker.
     void on_fill(const execution::Order& fill_order);
 
-    // Update mark price, recompute unrealized PnL, and adjust dynamic trailing stop.
-    // Accepts trailing stop distance % (e.g. 0.003 for 0.3%) and activation % (e.g. 0.005 for 0.5%).
-    void on_tick(const data::MarketTick& tick, 
-                 double trailing_dist_pct = 0.003, 
-                 double trailing_activation_pct = 0.005);
+    // Update mark price, recompute unrealized PnL, process Break-Even & Trailing Stop.
+    // Returns true if Stop Loss / Trailing Stop was hit on this tick.
+    bool on_tick(const data::MarketTick& tick,
+                 double break_even_trigger_pct = 0.0035, // +0.35% Profit Trigger
+                 double trailing_dist_pct = 0.0030,       // 0.30% Trailing Distance
+                 double trailing_activation_pct = 0.0050); // +0.50% Trailing Trigger
 
     void reset();
 

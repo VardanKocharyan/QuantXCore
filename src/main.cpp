@@ -1,5 +1,6 @@
 #include "QuantXCore/alpha/AlphaEngine.hpp"
-#include "QuantXCore/alpha/RsiStrategy.hpp"
+#include "QuantXCore/alpha/CompositeAlphaStrategy.hpp"
+#include "QuantXCore/alpha/MeanReversionStrategy.hpp"
 #include "QuantXCore/data/BinanceStreamer.hpp"
 #include "QuantXCore/execution/BinanceOmsClient.hpp"
 #include "QuantXCore/execution/LiveEngine.hpp"
@@ -87,13 +88,28 @@ int main(int argc, char* argv[]) {
     };
     QuantXCore::data::BinanceStreamer streamer(streamer_config);
 
-    // 4. Alpha Strategy
+    // 4. Alpha Strategy (Multi-Asset & Multi-Strategy)
     QuantXCore::alpha::AlphaEngine alpha_engine;
-    auto rsi_strat = std::make_shared<QuantXCore::alpha::RsiStrategy>("BTCUSDT", 3, 48.0, 52.0);
-    alpha_engine.register_strategy(rsi_strat);
+
+    // BTCUSDT Strategies
+    auto btc_composite = std::make_shared<QuantXCore::alpha::CompositeAlphaStrategy>("BTCUSDT");
+    auto btc_mean_rev  = std::make_shared<QuantXCore::alpha::MeanReversionStrategy>("BTCUSDT");
+
+    // ETHUSDT Strategies
+    auto eth_composite = std::make_shared<QuantXCore::alpha::CompositeAlphaStrategy>("ETHUSDT");
+    auto eth_mean_rev  = std::make_shared<QuantXCore::alpha::MeanReversionStrategy>("ETHUSDT");
+
+    // Register all 4 instances in AlphaEngine
+    alpha_engine.register_strategy(btc_composite);
+    alpha_engine.register_strategy(btc_mean_rev);
+    alpha_engine.register_strategy(eth_composite);
+    alpha_engine.register_strategy(eth_mean_rev);
 
     // 5. Risk Engine
     QuantXCore::risk::RiskLimits limits;
+    limits.allocated_capital_usd = allocated_capital;
+    limits.max_position_size_usd = allocated_capital;
+
     QuantXCore::risk::AccountState initial_state;
     initial_state.balance = allocated_capital; 
     QuantXCore::risk::RiskEngine risk_engine(limits, initial_state);
@@ -111,7 +127,6 @@ int main(int argc, char* argv[]) {
     );
 
     engine.set_spot_mode(is_spot_mode);
-
     engine.set_db_manager(db_manager);
 
     // 8. Start

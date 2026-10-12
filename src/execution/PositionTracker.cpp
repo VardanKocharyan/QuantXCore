@@ -1,12 +1,13 @@
 #include "QuantXCore/execution/PositionTracker.hpp"
-
 #include <cmath>
+#include <algorithm>
 
 namespace QuantXCore::execution {
 
 namespace {
 
 constexpr double kFlatEpsilon = 1e-9;
+constexpr double kBreakEvenBufferPct = 0.0005; // Lock +0.05% net profit after fees
 
 [[nodiscard]] bool is_flat(double quantity) {
     return std::abs(quantity) < kFlatEpsilon;
@@ -19,12 +20,13 @@ constexpr double kFlatEpsilon = 1e-9;
 }  // namespace
 
 void PositionTracker::apply_fill_locked(Position& pos, double signed_fill_qty, double fill_price) {
-    // Case 1: Flat before this fill -> open new position and reset trailing state
+    // Case 1: Flat before this fill -> open new position and reset states
     if (is_flat(pos.quantity)) {
         pos.quantity = signed_fill_qty;
         pos.average_entry_price = fill_price;
         pos.peak_price = fill_price;
         pos.trailing_stop_price = 0.0;
+        pos.break_even_active = false;
         pos.trailing_active = false;
         return;
     }
@@ -52,6 +54,7 @@ void PositionTracker::apply_fill_locked(Position& pos, double signed_fill_qty, d
             pos.average_entry_price = 0.0;
             pos.peak_price = 0.0;
             pos.trailing_stop_price = 0.0;
+            pos.break_even_active = false;
             pos.trailing_active = false;
         }
     } else {
@@ -63,6 +66,7 @@ void PositionTracker::apply_fill_locked(Position& pos, double signed_fill_qty, d
         pos.average_entry_price = fill_price;
         pos.peak_price = fill_price;
         pos.trailing_stop_price = 0.0;
+        pos.break_even_active = false;
         pos.trailing_active = false;
     }
 }
@@ -93,41 +97,57 @@ void PositionTracker::on_fill(const execution::Order& fill_order) {
     pos.unrealized_pnl = (pos.current_price - pos.average_entry_price) * pos.quantity;
 }
 
-void PositionTracker::on_tick(const data::MarketTick& tick, 
-                             double trailing_dist_pct, 
-                             double trailing_activation_pct) {
+bool PositionTracker::on_tick(const data::MarketTick& tick,
+                              double break_even_trigger_pct,
+                              double trailing_dist_pct,
+                              double trailing_activation_pct) {
     std::scoped_lock lock(mutex_);
 
     const auto it = positions_.find(tick.symbol);
     if (it == positions_.end()) {
-        return;
+        return false;
     }
 
     Position& pos = it->second;
+    if (is_flat(pos.quantity)) {
+        return false;
+    }
+
     pos.current_price = tick.price;
     pos.unrealized_pnl = (pos.current_price - pos.average_entry_price) * pos.quantity;
 
-    // Trailing Stop Loss logic for active LONG position
+    // Logic for active LONG position
     if (pos.quantity > 0.0 && pos.average_entry_price > 0.0) {
-        // Update peak price
         if (tick.price > pos.peak_price) {
             pos.peak_price = tick.price;
         }
 
-        // Check if trailing stop activation threshold is reached
-        const double profit_pct = (pos.peak_price - pos.average_entry_price) / pos.average_entry_price;
-        if (profit_pct >= trailing_activation_pct) {
+        const double peak_profit_pct = (pos.peak_price - pos.average_entry_price) / pos.average_entry_price;
+
+        // 1. Break-Even Check (+0.35% profit reached -> Lock Entry + 0.05%)
+        if (!pos.break_even_active && peak_profit_pct >= break_even_trigger_pct) {
+            pos.break_even_active = true;
+            const double break_even_price = pos.average_entry_price * (1.0 + kBreakEvenBufferPct);
+            pos.trailing_stop_price = std::max(pos.trailing_stop_price, break_even_price);
+        }
+
+        // 2. Dynamic Trailing Stop Check
+        if (peak_profit_pct >= trailing_activation_pct) {
             pos.trailing_active = true;
         }
 
-        // Adjust trailing stop price (Monotonically non-decreasing)
         if (pos.trailing_active) {
             const double calculated_stop = pos.peak_price * (1.0 - trailing_dist_pct);
-            if (calculated_stop > pos.trailing_stop_price) {
-                pos.trailing_stop_price = calculated_stop;
-            }
+            pos.trailing_stop_price = std::max(pos.trailing_stop_price, calculated_stop);
+        }
+
+        // 3. Stop Loss Execution Check (Price fell below Trailing Stop)
+        if (pos.trailing_stop_price > 0.0 && tick.price <= pos.trailing_stop_price) {
+            return true; // Trigger MARKET SELL exit order
         }
     }
+
+    return false;
 }
 
 Position PositionTracker::get_position(const std::string& symbol) const {

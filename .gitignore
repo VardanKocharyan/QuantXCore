@@ -35,3 +35,8 @@ Testing/
 
 # Package manager
 vcpkg_installed/
+
+# Local runtime databases
+*.db
+*.sqlite
+*.sqlite3

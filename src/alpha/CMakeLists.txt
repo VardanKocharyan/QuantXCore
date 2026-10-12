@@ -2,6 +2,7 @@ add_library(QuantXCore_alpha STATIC
     MovingAverageCrossover.cpp
     AlphaEngine.cpp
     RsiStrategy.cpp
+    CompositeAlphaStrategy.cpp
 )
 
 target_include_directories(QuantXCore_alpha PUBLIC

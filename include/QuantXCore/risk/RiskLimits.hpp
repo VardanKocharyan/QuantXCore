@@ -8,27 +8,21 @@
 
 namespace QuantXCore::risk {
 
-// Static configuration describing the risk envelope that the RiskEngine
-// enforces for a given account / strategy book. All percentage fields are
-// expressed as fractions (e.g. 0.15 == 15%).
+// Static configuration describing the risk envelope
 struct RiskLimits {
   double max_drawdown_pct{0.15};
   double max_daily_loss_pct{0.05};
   double max_position_size_usd{100000.0};
+  double allocated_capital_usd{0.0};
+  double min_stop_loss_pct{0.005};
   double max_leverage{3.0};
   std::size_t max_open_positions{5};
-
-  // Trailing stop loss distance percentage (e.g. 0.02 == 2%).
   double trailing_stop_pct{0.02};
-
-  // Maximum allowed taker/maker fee tier percentage (e.g. 0.001 == 0.1%).
   double max_fee_pct{0.001};
-
-  // Rate limiter: maximum orders allowed per second (0 = disabled).
   std::size_t max_orders_per_second{0};
 };
 
-// Result of a pre-trade risk check performed by the RiskEngine.
+// Result of a pre-trade risk check performed by the RiskEngine
 enum class RiskCheckResult {
   APPROVED,
   REJECTED_MAX_DRAWDOWN,
@@ -40,8 +34,7 @@ enum class RiskCheckResult {
   REJECTED_FEE_LIMIT_EXCEEDED,
 };
 
-// A fully-sized, risk-checked order ready to be routed to an execution
-// gateway.
+// A fully-sized, risk-checked order ready to be routed to execution
 struct OrderRequest {
   std::string symbol;
   alpha::SignalType side{alpha::SignalType::HOLD};
@@ -51,6 +44,24 @@ struct OrderRequest {
   double take_profit_price{0.0};
   std::string strategy_name;
   std::uint64_t timestamp{0};
+};
+
+// Account balance and tracking state
+struct AccountState {
+  double balance{0.0};
+  double peak_balance{0.0};
+  double daily_start_balance{0.0};
+  std::size_t open_positions_count{0};
+};
+
+// Position risk state tracker
+struct PositionRiskState {
+  std::string symbol;
+  alpha::SignalType side{alpha::SignalType::HOLD};
+  double entry_price{0.0};
+  double current_price{0.0};
+  double quantity{0.0};
+  std::uint64_t opened_timestamp{0};
 };
 
 }  // namespace QuantXCore::risk

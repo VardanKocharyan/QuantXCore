@@ -20,12 +20,11 @@ using OrderType = quantxcore::execution::OrderType;
 
 namespace {
 
-// ANSI Terminal Colors
 namespace Color {
     constexpr const char* RESET          = "\033[0m";
     constexpr const char* BOLD           = "\033[1m";
     constexpr const char* DIM            = "\033[2m";
-    
+
     constexpr const char* RED            = "\033[31m";
     constexpr const char* GREEN          = "\033[32m";
     constexpr const char* YELLOW         = "\033[33m";
@@ -40,7 +39,7 @@ namespace Color {
     constexpr const char* BG_CYAN_BLACK  = "\033[46m\033[30m\033[1m";
     constexpr const char* BG_YELLOW_BLACK= "\033[43m\033[30m\033[1m";
 
-    constexpr double BINANCE_SPOT_FEE_RATE = 0.001; // 0.1% Taker/Maker Fee
+    constexpr double BINANCE_SPOT_FEE_RATE = 0.001; // 0.1% Fee
 }
 
 std::string get_timestamp() {
@@ -136,13 +135,13 @@ void LiveEngine::stop_and_close_all_positions() {
                 oms_req.side = (pos.side == "BUY") ? OrderSide::SELL : OrderSide::BUY;
                 oms_req.type = OrderType::MARKET;
                 oms_req.quantity = pos.quantity;
-                
+
                 auto res = oms_->place_order(oms_req);
                 if (!res.success) {
-                    std::cerr << Color::RED << "[LiveEngine] Failed to close position for " 
+                    std::cerr << Color::RED << "[LiveEngine] Failed to close position for "
                               << pos.symbol << ": " << res.raw_response << Color::RESET << std::endl;
                 } else {
-                    std::cout << Color::GREEN << "[LiveEngine] Successfully closed position for " 
+                    std::cout << Color::GREEN << "[LiveEngine] Successfully closed position for "
                               << pos.symbol << Color::RESET << std::endl;
                 }
             }
@@ -178,31 +177,31 @@ void LiveEngine::recover_positions() {
             pos.symbol, pos.entry_price, qty, sl_pct, tp_pct, pos.trailing_pct
         );
 
-        std::cout << Color::CYAN << "  └─ RESTORED: " << Color::BOLD << pos.symbol 
-                  << Color::RESET << " | Side: " << (pos.side == "BUY" ? Color::GREEN : Color::RED) << pos.side 
+        std::cout << Color::CYAN << "  └─ RESTORED: " << Color::BOLD << pos.symbol
+                  << Color::RESET << " | Side: " << (pos.side == "BUY" ? Color::GREEN : Color::RED) << pos.side
                   << Color::RESET << " | Entry: $" << fmt_val(pos.entry_price, 2)
                   << " | Qty: " << fmt_val(pos.quantity, 6) << std::endl;
     }
 }
 
-constexpr double BINANCE_SPOT_FEE_RATE = 0.001; // 0.1% Taker/Maker Fee
+constexpr double BINANCE_SPOT_FEE_RATE = 0.001;
 
 void LiveEngine::handle_tick(const data::MarketTick& tick) {
     uint64_t count = ticks_processed_.fetch_add(1, std::memory_order_relaxed) + 1;
 
-    // 1. Periodic Stream Log (Every 50 ticks)
+    // 1. Periodic Stream Log
     if (count % 50 == 0) {
         std::cout << Color::DIM << "[" << get_timestamp() << "] " << Color::RESET
                   << Color::CYAN << Color::BOLD << "[TICK] " << Color::RESET
-                  << std::left << std::setw(8) << tick.symbol 
+                  << std::left << std::setw(8) << tick.symbol
                   << " Price: " << Color::YELLOW << Color::BOLD << "$" << std::right << std::setw(10) << fmt_val(tick.price, 2) << Color::RESET
                   << Color::DIM << " (Ticks: " << count << ")" << Color::RESET << std::endl;
     }
 
-    // 2. Periodic Dashboard Status Panel (Every 200 ticks)
+    // 2. Periodic Dashboard
     if (count % 200 == 0) {
-        double current_bal = (mode_ == LiveEngineMode::LIVE_TRADING && oms_) 
-                              ? oms_->get_account_balance("USDT") 
+        double current_bal = (mode_ == LiveEngineMode::LIVE_TRADING && oms_)
+                              ? oms_->get_account_balance("USDT")
                               : risk_engine_.account_state().balance;
         auto acc_state = risk_engine_.account_state();
 
@@ -218,81 +217,83 @@ void LiveEngine::handle_tick(const data::MarketTick& tick) {
                   << "└──────────────────────────────────────────────────────────────────────┘" << Color::RESET << "\n\n";
     }
 
-    // 3. Check Bracket Manager Trigger (SL/TP/Trailing)
+    // 3. Bracket Manager Trigger Exit
     auto trigger = bracket_manager_.on_tick(tick);
     if (trigger.type != TriggerType::NONE) {
         auto pos_opt = risk_engine_.get_position(tick.symbol);
         double entry_price = pos_opt.has_value() ? pos_opt->entry_price : trigger.trigger_price;
         double qty = std::abs(trigger.close_quantity);
 
-        // PnL & Fee Calculation
         bool is_short = pos_opt.has_value() && (pos_opt->side == alpha::SignalType::SELL);
-        double gross_pnl = is_short ? (entry_price - trigger.trigger_price) * qty 
+        double gross_pnl = is_short ? (entry_price - trigger.trigger_price) * qty
                                     : (trigger.trigger_price - entry_price) * qty;
         double exit_fee = (trigger.trigger_price * qty) * BINANCE_SPOT_FEE_RATE;
         double net_pnl = gross_pnl - exit_fee;
 
-        // Balance Update for Paper Trading
-        if (mode_ == LiveEngineMode::PAPER_TRADING) {
-            double old_bal = risk_engine_.account_state().balance;
-            risk_engine_.update_balance(old_bal + net_pnl);
-        }
-
-        double current_balance = (mode_ == LiveEngineMode::LIVE_TRADING && oms_) 
-                                  ? oms_->get_account_balance("USDT") 
-                                  : risk_engine_.account_state().balance;
-
-        std::string trig_type_str = (trigger.type == TriggerType::STOP_LOSS ? "STOP_LOSS" :
-                                    trigger.type == TriggerType::TAKE_PROFIT ? "TAKE_PROFIT" : "TRAILING_STOP");
-        const char* bg_color = (trigger.type == TriggerType::TAKE_PROFIT) ? Color::BG_GREEN_BLACK : Color::BG_RED_WHITE;
-
-        std::cout << "\n" << bg_color << " [TRADE CLOSED] BRACKET TRIGGERED (" << trig_type_str << ") " << Color::RESET << "\n"
-                  << Color::BOLD << " Symbol            : " << Color::CYAN << trigger.symbol << Color::RESET << "\n"
-                  << Color::BOLD << " Exit Price        : " << Color::YELLOW << "$" << fmt_val(trigger.trigger_price, 2) << Color::RESET << "\n"
-                  << Color::BOLD << " Closed Quantity   : " << fmt_val(qty, 6) << "\n"
-                  << Color::BOLD << " Exit Fee (0.1%)   : " << Color::RED << "-$" << fmt_val(exit_fee, 4) << Color::RESET << "\n"
-                  << Color::BOLD << " Net Realized PnL  : " << (net_pnl >= 0 ? Color::GREEN : Color::RED) << "$" << fmt_val(net_pnl, 2) << Color::RESET << "\n"
-                  << Color::BOLD << " Current Balance   : " << Color::GREEN << "$" << fmt_val(current_balance, 2) << " USDT" << Color::RESET << "\n"
-                  << Color::DIM << "----------------------------------------------------------------------" << Color::RESET << std::endl;
+        bool exit_confirmed = (mode_ != LiveEngineMode::LIVE_TRADING);
 
         if (mode_ == LiveEngineMode::LIVE_TRADING && oms_) {
             OrderRequest oms_req;
             oms_req.symbol = trigger.symbol;
             oms_req.side = (trigger.close_quantity > 0) ? OrderSide::BUY : OrderSide::SELL;
-            oms_req.type = OrderType::MARKET;
+            oms_req.type = OrderType::MARKET; // Guaranteed execution
             oms_req.quantity = qty;
-            oms_req.price = trigger.trigger_price;
 
             auto res = oms_->place_order(oms_req);
             if (!res.success) {
-                std::cerr << Color::RED << "[OMS ERROR] Bracket exit order failed: " << res.raw_response << Color::RESET << std::endl;
+                std::cerr << Color::RED << "[OMS ERROR] Bracket exit order failed: " << res.raw_response
+                          << " -- Preserving position state." << Color::RESET << std::endl;
+                exit_confirmed = false;
             } else {
                 double updated_bal = oms_->get_account_balance("USDT");
                 risk_engine_.update_balance(updated_bal);
+                exit_confirmed = true;
             }
+        } else if (mode_ == LiveEngineMode::PAPER_TRADING) {
+            double old_bal = risk_engine_.account_state().balance;
+            risk_engine_.update_balance(old_bal + net_pnl);
         }
 
-        if (db_manager_) {
-            db_manager_->delete_position(trigger.symbol);
+        if (exit_confirmed) {
+            double current_balance = (mode_ == LiveEngineMode::LIVE_TRADING && oms_)
+                                      ? oms_->get_account_balance("USDT")
+                                      : risk_engine_.account_state().balance;
 
-            persistence::TradeRecord trade{
-                .id = 0,
-                .symbol = trigger.symbol,
-                .side = (trigger.close_quantity > 0 ? "BUY" : "SELL"),
-                .price = trigger.trigger_price,
-                .quantity = qty,
-                .realized_pnl = net_pnl,
-                .timestamp = static_cast<uint64_t>(std::time(nullptr))
-            };
-            db_manager_->save_trade(trade);
+            std::string trig_type_str = (trigger.type == TriggerType::STOP_LOSS ? "STOP_LOSS" :
+                                        trigger.type == TriggerType::TAKE_PROFIT ? "TAKE_PROFIT" : "TRAILING_STOP");
+            const char* bg_color = (trigger.type == TriggerType::TAKE_PROFIT) ? Color::BG_GREEN_BLACK : Color::BG_RED_WHITE;
+
+            std::cout << "\n" << bg_color << " [TRADE CLOSED] BRACKET TRIGGERED (" << trig_type_str << ") " << Color::RESET << "\n"
+                      << Color::BOLD << " Symbol            : " << Color::CYAN << trigger.symbol << Color::RESET << "\n"
+                      << Color::BOLD << " Exit Price        : " << Color::YELLOW << "$" << fmt_val(trigger.trigger_price, 2) << Color::RESET << "\n"
+                      << Color::BOLD << " Closed Quantity   : " << fmt_val(qty, 6) << "\n"
+                      << Color::BOLD << " Exit Fee (0.1%)   : " << Color::RED << "-$" << fmt_val(exit_fee, 4) << Color::RESET << "\n"
+                      << Color::BOLD << " Net Realized PnL  : " << (net_pnl >= 0 ? Color::GREEN : Color::RED) << "$" << fmt_val(net_pnl, 2) << Color::RESET << "\n"
+                      << Color::BOLD << " Current Balance   : " << Color::GREEN << "$" << fmt_val(current_balance, 2) << " USDT" << Color::RESET << "\n"
+                      << Color::DIM << "----------------------------------------------------------------------" << Color::RESET << std::endl;
+
+            if (db_manager_) {
+                db_manager_->delete_position(trigger.symbol);
+                persistence::TradeRecord trade{
+                    .id = 0,
+                    .symbol = trigger.symbol,
+                    .side = (trigger.close_quantity > 0 ? "BUY" : "SELL"),
+                    .price = trigger.trigger_price,
+                    .quantity = qty,
+                    .realized_pnl = net_pnl,
+                    .timestamp = static_cast<uint64_t>(std::time(nullptr))
+                };
+                db_manager_->save_trade(trade);
+            }
+
+            risk_engine_.unregister_position(tick.symbol);
+            risk_engine_.decrement_open_positions();
+            risk_engine_.mark_symbol_cooldown(tick.symbol, tick.timestamp);
         }
-
-        risk_engine_.unregister_position(tick.symbol);
-        risk_engine_.decrement_open_positions();
         return;
     }
 
-    // 4. Check Risk Engine Dynamic Trailing Exit
+    // 4. Risk Engine Dynamic Trailing Exit
     auto exit_req = risk_engine_.on_tick(
         tick.symbol, tick.price, static_cast<std::uint64_t>(tick.timestamp));
     if (exit_req.has_value()) {
@@ -301,69 +302,73 @@ void LiveEngine::handle_tick(const data::MarketTick& tick) {
         double exit_price = exit_req->price > 0.0 ? exit_req->price : tick.price;
         double qty = exit_req->quantity;
 
-        bool is_short = (exit_req->side == alpha::SignalType::BUY); // If exit signal is BUY, position was SHORT
-        double gross_pnl = is_short ? (entry_price - exit_price) * qty 
+        bool is_short = (exit_req->side == alpha::SignalType::BUY);
+        double gross_pnl = is_short ? (entry_price - exit_price) * qty
                                     : (exit_price - entry_price) * qty;
         double exit_fee = (exit_price * qty) * BINANCE_SPOT_FEE_RATE;
         double net_pnl = gross_pnl - exit_fee;
 
-        if (mode_ == LiveEngineMode::PAPER_TRADING) {
-            double old_bal = risk_engine_.account_state().balance;
-            risk_engine_.update_balance(old_bal + net_pnl);
-        }
-
-        double current_balance = (mode_ == LiveEngineMode::LIVE_TRADING && oms_) 
-                                  ? oms_->get_account_balance("USDT") 
-                                  : risk_engine_.account_state().balance;
-
-        std::cout << "\n" << Color::BG_YELLOW_BLACK << " [TRADE CLOSED] RISK ENGINE TRAILING EXIT " << Color::RESET << "\n"
-                  << Color::BOLD << " Symbol            : " << Color::CYAN << exit_req->symbol << Color::RESET << "\n"
-                  << Color::BOLD << " Exit Price        : " << Color::YELLOW << "$" << fmt_val(exit_price, 2) << Color::RESET << "\n"
-                  << Color::BOLD << " Exit Quantity     : " << fmt_val(qty, 6) << "\n"
-                  << Color::BOLD << " Net Realized PnL  : " << (net_pnl >= 0 ? Color::GREEN : Color::RED) << "$" << fmt_val(net_pnl, 2) << Color::RESET << "\n"
-                  << Color::BOLD << " Current Balance   : " << Color::GREEN << "$" << fmt_val(current_balance, 2) << " USDT" << Color::RESET << "\n"
-                  << Color::BOLD << " Reason/Strategy   : " << Color::MAGENTA << exit_req->strategy_name << Color::RESET << "\n"
-                  << Color::DIM << "----------------------------------------------------------------------" << Color::RESET << std::endl;
+        bool exit_confirmed = (mode_ != LiveEngineMode::LIVE_TRADING);
 
         if (mode_ == LiveEngineMode::LIVE_TRADING && oms_) {
             OrderRequest oms_req;
             oms_req.symbol = exit_req->symbol;
             oms_req.side = (exit_req->side == alpha::SignalType::BUY) ? OrderSide::BUY : OrderSide::SELL;
-            oms_req.type = (exit_req->price > 0.0) ? OrderType::LIMIT : OrderType::MARKET;
+            oms_req.type = OrderType::MARKET; // Force MARKET order
             oms_req.quantity = qty;
-            oms_req.price = exit_req->price;
 
             auto res = oms_->place_order(oms_req);
             if (!res.success) {
-                std::cerr << Color::RED << "[OMS ERROR] Risk exit order failed: " << res.raw_response << Color::RESET << std::endl;
+                std::cerr << Color::RED << "[OMS ERROR] Risk exit order failed: " << res.raw_response
+                          << " -- Preserving position state." << Color::RESET << std::endl;
+                exit_confirmed = false;
             } else {
                 double updated_bal = oms_->get_account_balance("USDT");
                 risk_engine_.update_balance(updated_bal);
+                exit_confirmed = true;
             }
+        } else if (mode_ == LiveEngineMode::PAPER_TRADING) {
+            double old_bal = risk_engine_.account_state().balance;
+            risk_engine_.update_balance(old_bal + net_pnl);
         }
 
-        if (db_manager_) {
-            db_manager_->delete_position(exit_req->symbol);
+        if (exit_confirmed) {
+            double current_balance = (mode_ == LiveEngineMode::LIVE_TRADING && oms_)
+                                      ? oms_->get_account_balance("USDT")
+                                      : risk_engine_.account_state().balance;
 
-            persistence::TradeRecord trade{
-                .id = 0,
-                .symbol = exit_req->symbol,
-                .side = (exit_req->side == alpha::SignalType::BUY ? "BUY" : "SELL"),
-                .price = exit_price,
-                .quantity = qty,
-                .realized_pnl = net_pnl,
-                .timestamp = static_cast<uint64_t>(std::time(nullptr))
-            };
-            db_manager_->save_trade(trade);
+            std::cout << "\n" << Color::BG_YELLOW_BLACK << " [TRADE CLOSED] RISK ENGINE TRAILING EXIT " << Color::RESET << "\n"
+                      << Color::BOLD << " Symbol            : " << Color::CYAN << exit_req->symbol << Color::RESET << "\n"
+                      << Color::BOLD << " Exit Price        : " << Color::YELLOW << "$" << fmt_val(exit_price, 2) << Color::RESET << "\n"
+                      << Color::BOLD << " Exit Quantity     : " << fmt_val(qty, 6) << "\n"
+                      << Color::BOLD << " Net Realized PnL  : " << (net_pnl >= 0 ? Color::GREEN : Color::RED) << "$" << fmt_val(net_pnl, 2) << Color::RESET << "\n"
+                      << Color::BOLD << " Current Balance   : " << Color::GREEN << "$" << fmt_val(current_balance, 2) << " USDT" << Color::RESET << "\n"
+                      << Color::BOLD << " Reason/Strategy   : " << Color::MAGENTA << exit_req->strategy_name << Color::RESET << "\n"
+                      << Color::DIM << "----------------------------------------------------------------------" << Color::RESET << std::endl;
+
+            if (db_manager_) {
+                db_manager_->delete_position(exit_req->symbol);
+                persistence::TradeRecord trade{
+                    .id = 0,
+                    .symbol = exit_req->symbol,
+                    .side = (exit_req->side == alpha::SignalType::BUY ? "BUY" : "SELL"),
+                    .price = exit_price,
+                    .quantity = qty,
+                    .realized_pnl = net_pnl,
+                    .timestamp = static_cast<uint64_t>(std::time(nullptr))
+                };
+                db_manager_->save_trade(trade);
+            }
+
+            bracket_manager_.remove_bracket(tick.symbol);
+            risk_engine_.unregister_position(tick.symbol);
+            risk_engine_.decrement_open_positions();
+            risk_engine_.mark_symbol_cooldown(tick.symbol, tick.timestamp);
         }
-
-        bracket_manager_.remove_bracket(tick.symbol);
-        risk_engine_.unregister_position(tick.symbol);
-        risk_engine_.decrement_open_positions();
         return;
     }
 
-    // 5. Process Strategy Alpha Signals
+    // 5. Strategy Alpha Signals Processing
     auto signals = alpha_engine_.on_tick(tick);
     for (const auto& signal : signals) {
         if (signal.type == alpha::SignalType::HOLD) {
@@ -372,51 +377,79 @@ void LiveEngine::handle_tick(const data::MarketTick& tick) {
 
         bool has_active_pos = risk_engine_.has_position(tick.symbol);
 
-        // --- SPOT SPECIFIC RULES ---
+        // SPOT Rules
         if (is_spot_mode_) {
-            // Rule A: Cannot Short in Spot mode without position
             if (signal.type == alpha::SignalType::SELL && !has_active_pos) {
-                continue; 
+                continue;
             }
 
-            // Rule B: Manual Signal Exit (SELL received while holding BUY position)
+            // Rule B: Manual Signal Exit
             if (signal.type == alpha::SignalType::SELL && has_active_pos) {
                 auto pos_opt = risk_engine_.get_position(tick.symbol);
                 if (pos_opt.has_value()) {
+                    uint64_t now_sec = static_cast<uint64_t>(std::time(nullptr));
+                    uint64_t pos_duration = (now_sec > pos_opt->opened_timestamp) ? (now_sec - pos_opt->opened_timestamp) : 0;
+
+                    if (pos_duration < 60) {
+                        continue;
+                    }
+
                     double entry_price = pos_opt->entry_price;
                     double qty = pos_opt->quantity;
                     double gross_pnl = (tick.price - entry_price) * qty;
                     double exit_fee = (tick.price * qty) * BINANCE_SPOT_FEE_RATE;
                     double net_pnl = gross_pnl - exit_fee;
 
-                    if (mode_ == LiveEngineMode::PAPER_TRADING) {
+                    bool spot_exit_confirmed = (mode_ != LiveEngineMode::LIVE_TRADING);
+
+                    if (mode_ == LiveEngineMode::LIVE_TRADING && oms_) {
+                        OrderRequest oms_req;
+                        oms_req.symbol = tick.symbol;
+                        oms_req.side = OrderSide::SELL;
+                        oms_req.type = OrderType::MARKET;
+                        oms_req.quantity = qty;
+
+                        auto res = oms_->place_order(oms_req);
+                        if (res.success) {
+                            double updated_bal = oms_->get_account_balance("USDT");
+                            risk_engine_.update_balance(updated_bal);
+                            spot_exit_confirmed = true;
+                        } else {
+                            std::cerr << Color::RED << "[OMS ERROR] Spot signal exit failed for " << tick.symbol
+                                      << ": " << res.raw_response << Color::RESET << std::endl;
+                        }
+                    } else if (mode_ == LiveEngineMode::PAPER_TRADING) {
                         double old_bal = risk_engine_.account_state().balance;
                         risk_engine_.update_balance(old_bal + net_pnl);
                     }
 
-                    bracket_manager_.remove_bracket(tick.symbol);
-                    risk_engine_.unregister_position(tick.symbol);
-                    risk_engine_.decrement_open_positions();
-                    if (db_manager_) {
-                        db_manager_->delete_position(tick.symbol);
-                        persistence::TradeRecord trade{
-                            .id = 0,
-                            .symbol = tick.symbol,
-                            .side = "SELL",
-                            .price = tick.price,
-                            .quantity = qty,
-                            .realized_pnl = net_pnl,
-                            .timestamp = static_cast<uint64_t>(std::time(nullptr))
-                        };
-                        db_manager_->save_trade(trade);
-                    }
+                    if (spot_exit_confirmed) {
+                        bracket_manager_.remove_bracket(tick.symbol);
+                        risk_engine_.unregister_position(tick.symbol);
+                        risk_engine_.decrement_open_positions();
+                        risk_engine_.mark_symbol_cooldown(tick.symbol, tick.timestamp);
 
-                    std::cout << "\n" << Color::BG_YELLOW_BLACK << " [SPOT SIGNAL EXIT] CLOSED POSITION ON STRATEGY SELL " << Color::RESET << "\n"
-                              << Color::BOLD << " Symbol            : " << Color::CYAN << tick.symbol << Color::RESET << "\n"
-                              << Color::BOLD << " Exit Price        : $" << fmt_val(tick.price, 2) << "\n"
-                              << Color::BOLD << " Realized PnL      : " << (net_pnl >= 0 ? Color::GREEN : Color::RED) << "$" << fmt_val(net_pnl, 2) << Color::RESET << "\n"
-                              << Color::BOLD << " New Balance       : $" << fmt_val(risk_engine_.account_state().balance, 2) << " USDT\n"
-                              << Color::DIM << "----------------------------------------------------------------------" << Color::RESET << std::endl;
+                        if (db_manager_) {
+                            db_manager_->delete_position(tick.symbol);
+                            persistence::TradeRecord trade{
+                                .id = 0,
+                                .symbol = tick.symbol,
+                                .side = "SELL",
+                                .price = tick.price,
+                                .quantity = qty,
+                                .realized_pnl = net_pnl,
+                                .timestamp = static_cast<uint64_t>(std::time(nullptr))
+                            };
+                            db_manager_->save_trade(trade);
+                        }
+
+                        std::cout << "\n" << Color::BG_YELLOW_BLACK << " [SPOT SIGNAL EXIT] CLOSED POSITION ON STRATEGY SELL " << Color::RESET << "\n"
+                            << Color::BOLD << " Symbol            : " << Color::CYAN << tick.symbol << Color::RESET << "\n"
+                            << Color::BOLD << " Exit Price        : $" << fmt_val(tick.price, 2) << "\n"
+                            << Color::BOLD << " Realized PnL      : " << (net_pnl >= 0 ? Color::GREEN : Color::RED) << "$" << fmt_val(net_pnl, 2) << Color::RESET << "\n"
+                            << Color::BOLD << " New Balance       : $" << fmt_val(risk_engine_.account_state().balance, 2) << " USDT\n"
+                            << Color::DIM << "----------------------------------------------------------------------" << Color::RESET << std::endl;
+                    }
                 }
                 continue;
             }
@@ -430,14 +463,13 @@ void LiveEngine::handle_tick(const data::MarketTick& tick) {
             }
         }
 
-        // Standard Entry Processing (BUY in Spot OR BUY/SELL in Futures)
+        // Standard Entry Processing
         auto [check_res, order_req] = risk_engine_.process_signal(signal, risk_fraction_per_signal_);
         if (check_res == risk::RiskCheckResult::APPROVED && order_req.has_value()) {
             double cur_balance = risk_engine_.account_state().balance;
             double notional_usd = order_req->quantity * tick.price;
             double entry_fee = notional_usd * BINANCE_SPOT_FEE_RATE;
 
-            // Paper Trading Entry Fee Deduction
             if (mode_ == LiveEngineMode::PAPER_TRADING) {
                 risk_engine_.update_balance(cur_balance - entry_fee);
                 cur_balance = risk_engine_.account_state().balance;
@@ -481,25 +513,24 @@ void LiveEngine::handle_tick(const data::MarketTick& tick) {
             risk_engine_.increment_open_positions();
 
             double qty = (signal.type == alpha::SignalType::BUY) ? order_req->quantity : -order_req->quantity;
-            bracket_manager_.set_bracket(
-                tick.symbol, tick.price, qty, default_sl_pct_, default_tp_pct_, default_trailing_pct_
+
+            bracket_manager_.set_bracket_exact(
+                tick.symbol,
+                tick.price,
+                qty,
+                order_req->stop_loss_price,
+                order_req->take_profit_price,
+                default_trailing_pct_
             );
 
             if (db_manager_) {
-                double sl_price = (signal.type == alpha::SignalType::BUY)
-                                    ? tick.price * (1.0 - default_sl_pct_)
-                                    : tick.price * (1.0 + default_sl_pct_);
-                double tp_price = (signal.type == alpha::SignalType::BUY)
-                                    ? tick.price * (1.0 + default_tp_pct_)
-                                    : tick.price * (1.0 - default_tp_pct_);
-
                 persistence::PositionRecord pos{
                     .symbol = tick.symbol,
                     .side = (signal.type == alpha::SignalType::BUY ? "BUY" : "SELL"),
                     .entry_price = tick.price,
                     .quantity = order_req->quantity,
-                    .stop_loss = sl_price,
-                    .take_profit = tp_price,
+                    .stop_loss = order_req->stop_loss_price,
+                    .take_profit = order_req->take_profit_price,
                     .peak_price = tick.price,
                     .trailing_pct = default_trailing_pct_
                 };
